@@ -1,19 +1,41 @@
 {
   "name": "orion",
   "version": "1.0.0",
+  "private": true,
+  "description": "Telegram group management bot — moderation, filters, anti-flood, greetings, notes, and more",
+  "author": "Arjun-M",
+  "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Arjun-M/Orion.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Arjun-M/Orion/issues"
+  },
+  "homepage": "https://github.com/Arjun-M/Orion#readme",
+  "keywords": [
+    "telegram",
+    "bot",
+    "group-management",
+    "moderation",
+    "grammy"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
+    "dev": "tsx index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx index.ts"
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@openai/codex": "^0.142.5",
     "better-sqlite3": "^11.3.0",
     "dotenv": "^16.4.5",
     "grammy": "^1.29.0",
-    "mongodb": "^6.8.0",
-    "opencode-ai": "^1.17.13"
+    "mongodb": "^6.8.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
