@@ -21,13 +21,16 @@ export const composer = new Composer<Context>();
 export const modName = "Notes";
 
 export const helpText =
-  "Scrolls are messages I remember for you. Save anything — text, photos, stickers, documents — and retrieve them on command.\n\n" +
+  "Scrolls are messages I remember for you. Save anything — text, photos, stickers, documents — and retrieve them on command. " +
+  "Notes support HTML formatting, buttons, and welcome variables for dynamic content.\n\n" +
   "<b>Commands:</b>\n" +
   "• <code>/save &lt;name&gt;</code> — Record a scroll (reply to media or type text)\n" +
   "• <code>/get &lt;name&gt;</code> — Read a scroll\n" +
   "• <code>/notes</code> or <code>/saved</code> — List all scrolls in this camp\n" +
   "• <code>/clear &lt;name&gt;</code> — Shred a scroll\n\n" +
-  "Notes support <b>Markdown formatting</b>, <b>buttons</b>, and <b>welcome variables</b>. See <code>/markdownhelp</code>.";
+  "<b>How it works:</b> Notes are stored per-group. When retrieved, the content is rendered with HTML and variables are replaced. " +
+  "Buttons can be added with <code>[text](buttonurl://url)</code>. " +
+  "See <code>/markdownhelp</code> for formatting, buttons, and available variables.";
 
 composer.command("save", async (ctx: Context) => {
   const msg = ctx.message as Message;
@@ -123,15 +126,15 @@ composer.command("get", async (ctx: Context) => {
   const fid = note.file_id as string | undefined;
 
   if (ct === "text") {
-    await ctx.reply(escapeHtml(clean));
+    await ctx.reply(clean);
   } else if (ct === "sticker" && fid) {
     await ctx.api.sendSticker(msg.chat.id, fid);
   } else if (ct === "photo" && fid) {
-    await ctx.api.sendPhoto(msg.chat.id, fid, { caption: escapeHtml(clean) });
+    await ctx.api.sendPhoto(msg.chat.id, fid, { caption: clean });
   } else if (ct === "document" && fid) {
-    await ctx.api.sendDocument(msg.chat.id, fid, { caption: escapeHtml(clean) });
+    await ctx.api.sendDocument(msg.chat.id, fid, { caption: clean });
   } else if (ct === "audio" && fid) {
-    await ctx.api.sendAudio(msg.chat.id, fid, { caption: escapeHtml(clean) });
+    await ctx.api.sendAudio(msg.chat.id, fid, { caption: clean });
   } else if (ct === "voice" && fid) {
     await ctx.api.sendVoice(msg.chat.id, fid, { caption: escapeHtml(clean) });
   } else if (ct === "video" && fid) {

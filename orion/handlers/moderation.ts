@@ -36,7 +36,10 @@ export const helpText =
   "• <code>/warn &lt;user&gt; [reason]</code> — Mark a user with an arrow\n" +
   "• <code>/warns [user]</code> — Count their arrows\n" +
   "• <code>/resetwarn &lt;user&gt;</code> — Cleanse all arrows\n\n" +
-  "<b>Time formats:</b> <code>1m</code>, <code>2h</code>, <code>3d</code>, <code>1w</code>";
+  "<b>Time formats:</b> <code>1m</code>, <code>2h</code>, <code>3d</code>, <code>1w</code>\n\n" +
+  "<b>How it works:</b> Warnings stack per-user per-group. When a user's warns reach the limit (set in Filters), " +
+  "they are automatically banned. Only group admins can use these commands. " +
+  "Use reply or mention to target a user.";
 
 async function getUser(
   ctx: Context,

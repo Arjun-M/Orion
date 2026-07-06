@@ -61,7 +61,7 @@ export const config: Config = {
   cfApiKey: process.env.ORION_CF_API_KEY || null,
   debug: process.env.ORION_DEBUG?.toLowerCase() === "true",
   botUsername: process.env.ORION_USERNAME || "OrionGroupBot",
-  supportChat: "CBotics",
-  channel: "Synaptex",
+  supportChat: process.env.ORION_SUPPORT_CHAT || "",
+  channel: process.env.ORION_CHANNEL || "",
   githubRepo: "Arjun-M/Orion",
 };

@@ -16,16 +16,18 @@ export const composer = new Composer<Context>();
 export const modName = "Admin";
 
 export const helpText =
-  "A camp needs structure. I bestow ranks, pin words to the stars, and reveal those who lead.\n\n" +
+  "A camp needs structure. I bestow ranks, pin messages, and reveal those who lead. " +
+  "Admin commands require the user to be a group admin (cached for performance).\n\n" +
   "<b>Commands:</b>\n" +
   "• <code>/promote &lt;user&gt;</code> — Raise a hunter to scribe\n" +
   "• <code>/demote &lt;user&gt;</code> — Lower a scribe\n" +
-  "• <code>/title &lt;user&gt; &lt;text&gt;</code> — Bestow a custom title\n" +
+  "• <code>/title &lt;user&gt; &lt;text&gt;</code> — Bestow a custom title (max 16 chars)\n" +
   "• <code>/pin [notify]</code> — Pin a message to the stars\n" +
   "• <code>/unpin</code> — Release a pinned star\n" +
   "• <code>/invitelink</code> — Share the hunting grounds\n" +
   "• <code>/admins</code> — Name all leaders of this camp\n\n" +
-  "Only those with the proper authority may wield these commands.";
+  "<b>How it works:</b> Admin status is cached per-group and refreshed when someone is promoted/demoted " +
+  "or via <code>/admins</code>. Only group creator and administrators can use these commands.";
 
 
 async function isGroupAdmin(ctx: Context): Promise<boolean> {

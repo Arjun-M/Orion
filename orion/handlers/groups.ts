@@ -1,16 +1,8 @@
 import { Composer } from "grammy";
 import type { Context, NextFunction } from "grammy";
 import type { Message, ChatMemberUpdated } from "grammy/types";
+import { pick } from "../utils/texts.js";
 import {
-  WELCOME_TEXTS,
-  GOODBYE_TEXTS,
-  RULES_TEXTS,
-  NO_RULES_TEXTS,
-  pick,
-} from "../utils/texts.js";
-import {
-  parseButtonMarkdown,
-  buildKeyboard,
   requireGroup,
   escapeHtml,
 } from "../utils/helpers.js";
@@ -18,72 +10,38 @@ import { fetchAndCacheAdmins } from "../utils/permissions.js";
 import {
   getGroupSettings,
   saveGroupSetting,
-  getStickerBlacklist,
-  addStickerBlacklist,
-  removeStickerBlacklist,
   getApprovedUsers,
   approveUser,
   unapproveUser,
   getAntiChannel,
-  toggleAntiChannel,
   getAntiLinked,
-  toggleAntiLinked,
-  toggleAntiPin,
-  getWarnFilters,
-  addWarnFilter,
-  removeWarnFilter,
-  getWarns,
-  addWarn,
-  resetWarns,
   listFilters,
   getBlacklistWords,
   getLocks,
   LOCKABLE_FIELDS,
+  getWarns,
+  addWarn,
+  resetWarns,
+  getStickerBlacklist,
+  getWarnFilters,
 } from "../database/models.js";
-import { cacheDelete } from "../database/cache.js";
 
 export const composer = new Composer<Context>();
 
 export const modName = "Camp";
 
 export const helpText =
-  "I manage the daily life of your camp — welcomes, laws, trusted allies, and more.\n\n" +
-  "<b>Greetings:</b>\n" +
-  "• <code>/welcome [on/off]</code> — Toggle or view welcome messages\n" +
-  "• <code>/setwelcome &lt;text&gt;</code> — Carve a welcome message\n" +
-  "• <code>/resetwelcome</code> — Return to the old ways\n" +
-  "• <code>/goodbye [on/off]</code> — Toggle or view farewell\n" +
-  "• <code>/setgoodbye &lt;text&gt;</code> — Carve a farewell\n" +
-  "• <code>/resetgoodbye</code> — Return to the old ways\n" +
-  "• <code>/welcomemute &lt;mode&gt;</code> — Guard mode: off/soft/strong/captcha\n" +
-  "• <code>/cleanwelcome</code> — Auto-delete old welcomes\n" +
-  "• <code>/cleanservice</code> — Clean join/leave notices\n\n" +
-  "Welcome variables: <code>{first}</code>, <code>{last}</code>, <code>{fullname}</code>, <code>{username}</code>, <code>{mention}</code>, <code>{id}</code>, <code>{count}</code>, <code>{chatname}</code>\n\n" +
-  "<b>Laws (Rules):</b>\n" +
-  "• <code>/rules</code> — Read the camp's laws\n" +
-  "• <code>/setrules &lt;text&gt;</code> — Write the laws\n" +
-  "• <code>/clearrules</code> — Erase them\n\n" +
+  "I manage trusted allies who bypass locks, filters, and blacklists. " +
+  "Approved users are immune to automated moderation.\n\n" +
   "<b>Trusted Allies (Approve):</b>\n" +
   "• <code>/approve &lt;user&gt;</code> — Mark as trusted\n" +
   "• <code>/unapprove &lt;user&gt;</code> — Revoke trust\n" +
   "• <code>/approved</code> — List trusted allies\n\n" +
-  "<b>Arrow Filters (Auto-Warn):</b>\n" +
-  "• <code>/addwarn &lt;keyword&gt;</code> — Auto-warn on keyword\n" +
-  "• <code>/nowarn &lt;keyword&gt;</code> — Remove auto-warn\n" +
-  "• <code>/warnlist</code> — List auto-warn keywords\n" +
-  "• <code>/warnlimit &lt;n&gt;</code> — Set arrow limit (min 3)\n\n" +
-  "<b>Banned Trophies (Sticker Blacklist):</b>\n" +
-  "• <code>/addblsticker</code> — Ban a replied sticker\n" +
-  "• <code>/unblsticker</code> — Unban a replied sticker\n" +
-  "• <code>/blsticker</code> — List banned stickers\n" +
-  "• <code>/blstickermode &lt;action&gt;</code> — Set sticker punishment\n\n" +
-  "<b>Other:</b>\n" +
-  "• <code>/antichannel</code> — Toggle channel silence\n" +
-  "• <code>/antilinked</code> — Toggle anti-linked channel\n" +
-  "• <code>/antipin</code> — Toggle anti-pin\n" +
-  "• <code>/logchannel &lt;id&gt;</code> — Set logging channel\n" +
-  "• <code>/unlinklog</code> — Remove logging channel\n" +
-  "• <code>/markdownhelp</code> — Markdown & button formatting guide";
+  "<b>Info:</b>\n" +
+  "• <code>/settings</code> — View camp configuration\n" +
+  "• <code>/markdownhelp</code> — Markdown & button formatting guide\n\n" +
+  "<b>How it works:</b> Approved users are stored per-group and bypass all filter, blacklist, lock, and flood checks. " +
+  "Use <code>/approve</code> to trust a user who needs to post links, stickers, or media without restriction.";
 
 function commandName(text: string): string {
   return text.split(/\s+/)[0].toLowerCase().split("@", 1)[0];
@@ -194,257 +152,6 @@ async function enforceFlood(ctx: Context, msg: Message, settings: Record<string,
   return await applyModerationAction(ctx, msg, (settings.flood_action as string) || "mute", "Flooding");
 }
 
-async function sendWelcome(ctx: Context, chatId: number, chatName: string, user: { id: number; first_name?: string; last_name?: string; username?: string }, serviceMessageId?: number): Promise<void> {
-  const settings = await getGroupSettings(chatId);
-  if (settings.clean_service && serviceMessageId) {
-    try {
-      await ctx.api.deleteMessage(chatId, serviceMessageId);
-    } catch {
-      // ignore missing delete permissions
-    }
-  }
-  if (!settings.welcome_enabled) return;
-
-  const previousWelcomeId = settings.last_welcome_message_id as number | undefined;
-  if (settings.clean_welcome && previousWelcomeId) {
-    try {
-      await ctx.api.deleteMessage(chatId, previousWelcomeId);
-    } catch {
-      // ignore stale message ids or missing permissions
-    }
-  }
-
-  const memberCount = await ctx.api.getChatMemberCount(chatId);
-  const kw: Record<string, string | number> = {
-    first: user.first_name || "",
-    last: user.last_name || "",
-    fullname: `${user.first_name || ""} ${user.last_name || ""}`.trim(),
-    username: user.username ? `@${user.username}` : "",
-    mention: `<a href="tg://user?id=${user.id}">${escapeHtml(user.first_name || "User")}</a>`,
-    id: user.id,
-    count: memberCount,
-    chatname: chatName || "this camp",
-  };
-  let msg = (settings.welcome_message as string) ||
-    pick(WELCOME_TEXTS, { first: kw.first as string, count: kw.count as number });
-  try {
-    msg = msg.replace(/\{(\w+)\}/g, (_, key) => String(kw[key] ?? `{${key}}`));
-  } catch {
-    // ignore
-  }
-  const buttonsText = settings.welcome_buttons as string | undefined;
-  let sent;
-  if (buttonsText) {
-    const [, buttons] = parseButtonMarkdown(buttonsText);
-    sent = await ctx.api.sendMessage(chatId, msg, { reply_markup: buildKeyboard(buttons) });
-  } else {
-    sent = await ctx.api.sendMessage(chatId, msg);
-  }
-  if (settings.clean_welcome) {
-    await saveGroupSetting(chatId, { last_welcome_message_id: sent.message_id });
-  }
-}
-
-async function sendGoodbye(ctx: Context, chatId: number, chatName: string, user: { id: number; first_name?: string; last_name?: string }, serviceMessageId?: number): Promise<void> {
-  const settings = await getGroupSettings(chatId);
-  if (settings.clean_service && serviceMessageId) {
-    try {
-      await ctx.api.deleteMessage(chatId, serviceMessageId);
-    } catch {
-      // ignore missing delete permissions
-    }
-  }
-  if (!settings.goodbye_enabled) return;
-
-  const memberCount = await ctx.api.getChatMemberCount(chatId);
-  const kw: Record<string, string | number> = {
-    first: user.first_name || "",
-    fullname: `${user.first_name || ""} ${user.last_name || ""}`.trim(),
-    count: memberCount,
-    chatname: chatName || "this camp",
-  };
-  let msg = (settings.goodbye_message as string) ||
-    pick(GOODBYE_TEXTS, { first: kw.first as string, count: kw.count as number });
-  try {
-    msg = msg.replace(/\{(\w+)\}/g, (_, key) => String(kw[key] ?? `{${key}}`));
-  } catch {
-    // ignore
-  }
-  const [clean] = parseButtonMarkdown(msg);
-  await ctx.api.sendMessage(chatId, clean);
-}
-
-composer.on("chat_member", async (ctx: Context) => {
-  const event = ctx.chatMember;
-  if (!event) return;
-  const chatId = event.chat.id;
-  const newStatus = event.new_chat_member.status;
-  const oldStatus = event.old_chat_member.status;
-  const user = event.new_chat_member.user;
-
-  if (
-    newStatus === "administrator" ||
-    oldStatus === "administrator" ||
-    newStatus === "creator" ||
-    oldStatus === "creator"
-  ) {
-    await fetchAndCacheAdmins(chatId, ctx.api);
-  }
-
-  if (
-    newStatus === "member" &&
-    (oldStatus === "left" || oldStatus === "kicked")
-  ) {
-    await sendWelcome(ctx, chatId, event.chat.title || "this camp", user);
-  } else if (
-    (newStatus === "left" || newStatus === "kicked") &&
-    oldStatus === "member"
-  ) {
-    await sendGoodbye(ctx, chatId, event.chat.title || "this camp", user);
-  }
-});
-
-composer.on("message:new_chat_members", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg?.new_chat_members) return;
-  for (const user of msg.new_chat_members) {
-    await sendWelcome(ctx, msg.chat.id, msg.chat.title || "this camp", user, msg.message_id);
-  }
-});
-
-composer.on("message:left_chat_member", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg?.left_chat_member) return;
-  await sendGoodbye(ctx, msg.chat.id, msg.chat.title || "this camp", msg.left_chat_member, msg.message_id);
-});
-
-composer.command(
-  ["welcome", "setwelcome", "resetwelcome", "goodbye", "setgoodbye", "resetgoodbye", "welcomemute", "cleanwelcome", "cleanservice"],
-  async (ctx: Context) => {
-    const msg = ctx.message as Message;
-    if (!msg || !(await requireGroup(ctx))) return;
-    const text = msg.text || "";
-    const cmd = commandName(text);
-
-    if (cmd === "/welcome") {
-      const settings = await getGroupSettings(msg.chat.id);
-      if (text.split(/\s+/).length > 1) {
-        const val = !settings.welcome_enabled;
-        await saveGroupSetting(msg.chat.id, { welcome_enabled: val });
-        await ctx.reply(`Welcome messages: <b>${val ? "enabled" : "disabled"}</b>`);
-      } else {
-        await ctx.reply(
-          `Welcome: <b>${settings.welcome_enabled ? "on" : "off"}</b>\nCustom: <b>${settings.welcome_message ? "set" : "default"}</b>`,
-        );
-      }
-    } else if (cmd === "/setwelcome") {
-      let welcomeText: string;
-      if (msg.reply_to_message) {
-        welcomeText = msg.reply_to_message.text || msg.reply_to_message.caption || "Welcome!";
-      } else {
-        const parts = text.split(/\s+/);
-        if (parts.length < 2) {
-          await ctx.reply("Provide a welcome message or reply to one for me to carve.");
-          return;
-        }
-        welcomeText = parts.slice(1).join(" ");
-      }
-      await saveGroupSetting(msg.chat.id, { welcome_message: welcomeText });
-      await ctx.reply("The welcome message is set. New arrivals shall hear it.");
-    } else if (cmd === "/resetwelcome") {
-      await saveGroupSetting(msg.chat.id, { welcome_message: null });
-      await ctx.reply("Welcome reset to the old ways.");
-    } else if (cmd === "/goodbye") {
-      const settings = await getGroupSettings(msg.chat.id);
-      if (text.split(/\s+/).length > 1) {
-        const val = !settings.goodbye_enabled;
-        await saveGroupSetting(msg.chat.id, { goodbye_enabled: val });
-        await ctx.reply(`Goodbye messages: <b>${val ? "enabled" : "disabled"}</b>`);
-      } else {
-        await ctx.reply(
-          `Goodbye: <b>${settings.goodbye_enabled ? "on" : "off"}</b>\nCustom: <b>${settings.goodbye_message ? "set" : "default"}</b>`,
-        );
-      }
-    } else if (cmd === "/setgoodbye") {
-      let goodbyeText: string;
-      if (msg.reply_to_message) {
-        goodbyeText = msg.reply_to_message.text || msg.reply_to_message.caption || "Goodbye!";
-      } else {
-        const parts = text.split(/\s+/);
-        if (parts.length < 2) {
-          await ctx.reply("Provide a goodbye message or reply to one.");
-          return;
-        }
-        goodbyeText = parts.slice(1).join(" ");
-      }
-      await saveGroupSetting(msg.chat.id, { goodbye_message: goodbyeText });
-      await ctx.reply("The farewell is inscribed. Departing souls shall hear it.");
-    } else if (cmd === "/resetgoodbye") {
-      await saveGroupSetting(msg.chat.id, { goodbye_message: null });
-      await ctx.reply("Goodbye reset to the old ways.");
-    } else if (cmd === "/welcomemute") {
-      const parts = text.split(/\s+/);
-      if (
-        parts.length > 1 &&
-        ["off", "soft", "strong", "captcha"].includes(parts[1].toLowerCase())
-      ) {
-        await saveGroupSetting(msg.chat.id, {
-          welcome_mute: parts[1].toLowerCase(),
-        });
-        await ctx.reply(`Welcome mute set to: <b>${parts[1].toLowerCase()}</b>`);
-      } else {
-        const settings = await getGroupSettings(msg.chat.id);
-        await ctx.reply(
-          `Current welcome mute: <b>${settings.welcome_mute}</b>\nOptions: off, soft, strong, captcha`,
-        );
-      }
-    } else if (cmd === "/cleanwelcome") {
-      const settings = await getGroupSettings(msg.chat.id);
-      const val = !settings.clean_welcome;
-      await saveGroupSetting(msg.chat.id, { clean_welcome: val });
-      await ctx.reply(`Clean welcome: <b>${val ? "on" : "off"}</b>`);
-    } else if (cmd === "/cleanservice") {
-      const settings = await getGroupSettings(msg.chat.id);
-      const val = !settings.clean_service;
-      await saveGroupSetting(msg.chat.id, { clean_service: val });
-      await ctx.reply(`Clean service: <b>${val ? "on" : "off"}</b>`);
-    }
-  },
-);
-
-// ── Rules ──
-
-composer.command("rules", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg || !(await requireGroup(ctx))) return;
-  const settings = await getGroupSettings(msg.chat.id);
-  const rules = settings.rules as string | undefined;
-  if (rules) {
-    await ctx.reply(`${pick(RULES_TEXTS)}\n\n${escapeHtml(rules)}`);
-  } else {
-    await ctx.reply(pick(NO_RULES_TEXTS));
-  }
-});
-
-composer.command("setrules", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg || !(await requireGroup(ctx))) return;
-  const parts = msg.text?.split(/\s+/) || [];
-  if (parts.length < 2) {
-    await ctx.reply("What laws shall I inscribe? Provide text after <code>/setrules</code>");
-    return;
-  }
-  await saveGroupSetting(msg.chat.id, { rules: parts.slice(1).join(" ") });
-  await ctx.reply("The laws are written. Break them at your peril.");
-});
-
-composer.command("clearrules", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg || !(await requireGroup(ctx))) return;
-  await saveGroupSetting(msg.chat.id, { rules: null });
-  await ctx.reply("The laws have been erased. Chaos returns.");
-});
-
 // ── Approve ──
 
 composer.command("approve", async (ctx: Context) => {
@@ -489,162 +196,6 @@ composer.command("approved", async (ctx: Context) => {
   } else {
     await ctx.reply("No trusted allies in this camp.");
   }
-});
-
-// ── Sticker Blacklist ──
-
-composer.command("addblsticker", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg?.reply_to_message?.sticker) {
-    await ctx.reply("Reply to a sticker to blacklist it.");
-    return;
-  }
-  const trigger = msg.reply_to_message.sticker.file_id;
-  await addStickerBlacklist(msg.chat.id, trigger);
-  cacheDelete(`sticker_bl:${msg.chat.id}`);
-  await ctx.reply("That trophy is banned from this camp.");
-});
-
-composer.command("unblsticker", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg?.reply_to_message?.sticker) {
-    await ctx.reply("Reply to a sticker to unban it.");
-    return;
-  }
-  const trigger = msg.reply_to_message.sticker.file_id;
-  await removeStickerBlacklist(msg.chat.id, trigger);
-  cacheDelete(`sticker_bl:${msg.chat.id}`);
-  await ctx.reply("That trophy is no longer banned.");
-});
-
-composer.command("blsticker", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg) return;
-  const stickers = await getStickerBlacklist(msg.chat.id);
-  if (stickers.length > 0) {
-    await ctx.reply(`<b>${stickers.length} banned trophies.</b>`);
-  } else {
-    await ctx.reply("No banned stickers in this camp.");
-  }
-});
-
-composer.command("blstickermode", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg) return;
-  const parts = msg.text?.split(/\s+/) || [];
-  const modes = ["nothing", "delete", "warn", "mute", "kick", "ban", "tban", "tmute"];
-  if (parts.length < 2 || !modes.includes(parts[1].toLowerCase())) {
-    await ctx.reply(`Usage: <code>/blstickermode &lt;${modes.join("/")}&gt;</code>`);
-    return;
-  }
-  await saveGroupSetting(msg.chat.id, {
-    sticker_blacklist_action: parts[1].toLowerCase(),
-  });
-  await ctx.reply(`Sticker blacklist action: <b>${parts[1].toLowerCase()}</b>`);
-});
-
-// ── Anti-Linked Channel ──
-
-composer.command("antilinked", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg) return;
-  const val = await toggleAntiLinked(msg.chat.id);
-  await ctx.reply(`Anti-linked channel: <b>${val ? "enabled" : "disabled"}</b>`);
-});
-
-composer.command("antipin", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg) return;
-  const val = await toggleAntiPin(msg.chat.id);
-  await ctx.reply(`Anti-pin: <b>${val ? "enabled" : "disabled"}</b>`);
-});
-
-// ── AntiChannel ──
-
-composer.command("antichannel", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg) return;
-  const val = await toggleAntiChannel(msg.chat.id);
-  await ctx.reply(`Anti-channel: <b>${val ? "enabled" : "disabled"}</b>`);
-});
-
-// ── Warn Filters ──
-
-composer.command("addwarn", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg) return;
-  const text = msg.text || msg.caption || "";
-  const parts = text.split(/\s+/);
-  if (parts.length < 2) {
-    await ctx.reply("Usage: <code>/addwarn &lt;keyword&gt;</code>");
-    return;
-  }
-  const keyword = parts.slice(1).join(" ").trim().toLowerCase();
-  await addWarnFilter(msg.chat.id, keyword);
-  await ctx.reply(`Auto-warn set for <b>'${keyword}'</b>.`);
-});
-
-composer.command("nowarn", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg) return;
-  const parts = msg.text?.split(/\s+/) || [];
-  if (parts.length < 2) {
-    await ctx.reply("Which auto-warn keyword should I stop watching for?");
-    return;
-  }
-  const keyword = parts.slice(1).join(" ").trim().toLowerCase();
-  await removeWarnFilter(msg.chat.id, keyword);
-  await ctx.reply(`Auto-warn removed for <b>'${keyword}'</b>.`);
-});
-
-composer.command(["warnlist", "warnfilters"], async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg) return;
-  const wfs = await getWarnFilters(msg.chat.id);
-  if (wfs.length > 0) {
-    const lines = [`<b>${wfs.length} auto-warn keywords:</b>`];
-    for (const w of wfs) {
-      lines.push(`• <code>${w.keyword}</code>`);
-    }
-    await ctx.reply(lines.join("\n"));
-  } else {
-    await ctx.reply("No auto-warn keywords are set.");
-  }
-});
-
-composer.command("warnlimit", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg) return;
-  const parts = msg.text?.split(/\s+/) || [];
-  if (parts.length < 2 || !/^\d+$/.test(parts[1])) {
-    await ctx.reply("Usage: <code>/warnlimit &lt;number&gt;</code> (minimum 3)");
-    return;
-  }
-  const limit = Math.max(3, parseInt(parts[1], 10));
-  await saveGroupSetting(msg.chat.id, { warn_limit: limit });
-  await ctx.reply(`Warn limit set to <b>${limit}</b>.`);
-});
-
-// ── Log Channel ──
-
-composer.command("logchannel", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg) return;
-  const parts = msg.text?.split(/\s+/) || [];
-  if (parts.length < 2 || !/^-?\d+$/.test(parts[1])) {
-    await ctx.reply("Usage: <code>/logchannel &lt;chat_id&gt;</code>");
-    return;
-  }
-  const chatId = parseInt(parts[1], 10);
-  await saveGroupSetting(msg.chat.id, { log_channel: chatId });
-  await ctx.reply(`Log channel set to <code>${chatId}</code>.`);
-});
-
-composer.command("unlinklog", async (ctx: Context) => {
-  const msg = ctx.message as Message;
-  if (!msg) return;
-  await saveGroupSetting(msg.chat.id, { log_channel: null });
-  await ctx.reply("Log channel unlinked. The hunt leaves no record here.");
 });
 
 // ── Message Auto-Triggers ──
@@ -760,8 +311,8 @@ composer.on("message:text", async (ctx: Context, next: NextFunction) => {
       } catch {
         // ignore
       }
-      const [clean] = parseButtonMarkdown(content);
-      await ctx.reply(escapeHtml(clean));
+      const [clean] = await (await import("../utils/helpers.js")).parseButtonMarkdown(content);
+      await ctx.reply(clean);
       return;
     }
   }

@@ -7,7 +7,7 @@ import {
   saveGroupSetting,
 } from "../database/models.js";
 import { requireGroup } from "../utils/helpers.js";
-import { OWNER_IDS, SUDO_USERS } from "../utils/permissions.js";
+import { isAdmin } from "../utils/permissions.js";
 
 export const composer = new Composer<Context>();
 
@@ -18,23 +18,49 @@ async function requireGroupAdmin(ctx: Context): Promise<boolean> {
   const msg = ctx.message as Message | undefined;
   const user = msg?.from;
   if (!msg || !user || !(await requireGroup(ctx))) return false;
-  if (OWNER_IDS.has(user.id) || SUDO_USERS.has(user.id)) return true;
-  try {
-    const member = await ctx.api.getChatMember(msg.chat.id, user.id);
-    if (member.status === "creator" || member.status === "administrator") return true;
-  } catch {
-    // ignore
-  }
+  if (await isAdmin(msg.chat.id, user.id)) return true;
   await ctx.reply(pick(NOT_ADMIN_TEXTS));
   return false;
 }
 
+const adminMentionRx = /(?:^|\s)@admins?\b/i;
+
+composer.on("message:text", async (ctx: Context) => {
+  const msg = ctx.message as Message;
+  if (!msg || msg.chat.type === "private") return;
+  const text = msg.text || "";
+  if (!adminMentionRx.test(text)) return;
+  if (text.startsWith("/")) return;
+
+  const settings = await getGroupSettings(msg.chat.id);
+  if (!settings.reports_enabled) return;
+
+  const admins = await ctx.api.getChatAdministrators(msg.chat.id);
+  const mention = `<a href="tg://user?id=${msg.from!.id}">${msg.from!.first_name}</a>`;
+  const txt = `<b>Report from ${mention}</b>:\n${text}`;
+
+  for (const a of admins) {
+    if (!a.user.is_bot) {
+      try {
+        await ctx.api.sendMessage(a.user.id, `🚨 <b>@admin in ${msg.chat.title}</b>:\n${txt}`);
+      } catch {
+        // ignore
+      }
+    }
+  }
+  await ctx.reply("The camp leaders have been alerted.");
+});
+
 export const helpText =
-  "When you spot a beast, summon the hunters.\n\n" +
+  "When you spot a beast, summon the hunters. " +
+  "Reports are sent privately to every admin in the camp, along with the reporter's identity and the context.\n\n" +
   "<b>Commands:</b>\n" +
-  "• <code>/report &lt;user&gt;</code> — Call the camp leaders to action\n" +
+  "• <code>/report</code> (reply to a message) — Call the camp leaders to action\n" +
   "• <code>/reports</code> — Toggle whether reporting is enabled\n\n" +
-  "Reports are sent privately to all admins. Do not abuse.";
+  "<b>@admin mention:</b> Typing <code>@admin</code> or <code>@admins</code> in a group message also " +
+  "alerts all admins with your message content.\n\n" +
+  "<b>How it works:</b> When a report is triggered, I fetch the admin list and send a private message to each. " +
+  "Only admins can enable/disable reporting. Reports are not anonymous — admins see who reported.";
 
 composer.command("report", async (ctx: Context) => {
   const msg = ctx.message as Message;

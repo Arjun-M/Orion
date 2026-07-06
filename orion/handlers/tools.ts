@@ -185,7 +185,15 @@ composer.command("ud", async (ctx: Context) => {
 composer.command("ping", async (ctx: Context) => {
   const msg = ctx.message as Message;
   if (!msg) return;
-  await ctx.reply("<b>Pong!</b> I am here.");
+  const start = Date.now();
+  const sent = await ctx.reply("<b>Ping!<\/b> Measuring the winds...");
+  const end = Date.now();
+  const apiTime = end - start;
+  await ctx.api.editMessageText(
+    msg.chat.id,
+    sent.message_id,
+    `<b>Pong!<\/b> I am here.\n<code>Response: ${apiTime}ms<\/code>`,
+  );
 });
 
 composer.command("pong", async (ctx: Context) => {
